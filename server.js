@@ -6,13 +6,17 @@ const XLSX = require("xlsx");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const LOCAL_BI_DIR = path.join(__dirname, "BI");
+const RENDER_BI_DIR = process.env.RENDER_DISK_PATH
+  ? path.join(process.env.RENDER_DISK_PATH, "BI")
+  : "";
 const VOLUME_BI_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH
   ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "BI")
   : "";
 
 function configuredBiDir() {
-  const preferred = process.env.BI_DIR || VOLUME_BI_DIR;
-  if (preferred && fs.existsSync(preferred) && walkXlsx(preferred).length) return preferred;
+  const candidates = [process.env.BI_DIR, RENDER_BI_DIR, VOLUME_BI_DIR];
+  const preferred = candidates.find((dir) => dir && fs.existsSync(dir) && walkXlsx(dir).length);
+  if (preferred) return preferred;
   return LOCAL_BI_DIR;
 }
 

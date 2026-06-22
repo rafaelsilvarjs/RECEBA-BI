@@ -15,21 +15,46 @@ Acesse:
 http://localhost:3000
 ```
 
-## Publicar na Railway
+## Publicar no Render
 
-1. Crie um novo projeto na Railway a partir do repositório GitHub.
-2. A Railway detecta Node.js automaticamente.
-3. O comando de start já está configurado:
+1. Crie um novo **Web Service** no Render usando este repositorio GitHub.
+2. O Render detecta Node.js automaticamente.
+3. Use:
 
 ```bash
-npm start
+Build Command: npm install
+Start Command: npm start
 ```
 
-4. O app usa a porta automática da Railway através de `process.env.PORT`.
+4. O app usa a porta automatica do Render por `process.env.PORT`.
+5. O arquivo `render.yaml` ja inclui um disco persistente montado em:
 
-## Pasta BI
+```text
+/var/data
+```
 
-Por padrão, o sistema lê os arquivos Excel em:
+6. Para usar arquivos Excel fora do repositorio, coloque a pasta BI dentro do disco:
+
+```text
+/var/data/BI
+```
+
+Estrutura esperada:
+
+```text
+/var/data/BI/
+  CURITIBA/
+  GOIANIA/
+  RIO DE JANEIRO/
+  SAO PAULO/
+  FINANCEIRO/
+```
+
+Se `/var/data/BI` estiver vazio, o sistema usa a pasta `BI` versionada no repositorio.
+
+## Pasta BI local
+
+Por padrao, em ambiente local, o sistema le os arquivos Excel em:
 
 ```text
 BI/
@@ -41,20 +66,20 @@ O financeiro deve ficar em:
 BI/FINANCEIRO/
 ```
 
-Na Railway, se você criar um Volume, pode montar o volume e configurar a variável:
+## Variaveis opcionais
+
+Voce pode forcar outro caminho para os arquivos BI com:
 
 ```text
-BI_DIR=/caminho/do/volume/BI
+BI_DIR=/caminho/para/BI
 ```
-
-Se `BI_DIR` ou o volume estiverem vazios, o sistema usa a pasta `BI` versionada no repositório.
 
 ## Login
 
-Os logins autorizados estão configurados no frontend. A senha inicial é:
+Os logins autorizados estao configurados no frontend. A senha inicial e:
 
 ```text
 RECEBA99
 ```
 
-No primeiro acesso, o usuário deve criar uma nova senha.
+No primeiro acesso, o usuario deve criar uma nova senha.
