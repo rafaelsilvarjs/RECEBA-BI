@@ -1,0 +1,577 @@
+const path = require("path");
+const fs = require("fs");
+const express = require("express");
+const XLSX = require("xlsx");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const LOCAL_BI_DIR = path.join(__dirname, "BI");
+const VOLUME_BI_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "BI")
+  : "";
+
+function configuredBiDir() {
+  const preferred = process.env.BI_DIR || VOLUME_BI_DIR;
+  if (preferred && fs.existsSync(preferred) && walkXlsx(preferred).length) return preferred;
+  return LOCAL_BI_DIR;
+}
+
+const BI_DIR = configuredBiDir();
+const FINANCE_DIR = path.join(BI_DIR, "FINANCEIRO");
+
+const cityOrder = ["SAO PAULO", "GOIANIA", "CURITIBA", "RIO DE JANEIRO"];
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function normalizeCity(value) {
+  const plain = normalizeText(value).toUpperCase();
+  if (plain.includes("SAO PAULO")) return "SAO PAULO";
+  if (plain.includes("GOIANIA")) return "GOIANIA";
+  if (plain.includes("CURITIBA")) return "CURITIBA";
+  if (plain.includes("RIO")) return "RIO DE JANEIRO";
+  return plain || "SEM CIDADE";
+}
+
+function toNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const text = String(value ?? "")
+    .replace("%", "")
+    .replace(/\./g, "")
+    .replace(",", ".")
+    .trim();
+  const parsed = Number.parseFloat(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toPercent(value) {
+  if (typeof value === "number") return value > 1 ? value / 100 : value;
+  return toNumber(value) / 100;
+}
+
+function parseDate(value) {
+  if (value instanceof Date && !Number.isNaN(value)) return value;
+  if (typeof value === "number") {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed) return new Date(parsed.y, parsed.m - 1, parsed.d);
+  }
+  const match = String(value ?? "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (match) return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+
+  const isoLike = String(value ?? "").match(/^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$/);
+  if (isoLike) return new Date(Number(isoLike[1]), Number(isoLike[2]) - 1, Number(isoLike[3]));
+
+  return null;
+}
+
+function isoDate(date) {
+  if (!date) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function brDate(date) {
+  if (!date) return "-";
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+}
+
+function getWeekLabel(date) {
+  if (!date) return "Sem semana";
+  const first = new Date(date.getFullYear(), 0, 1);
+  const days = Math.floor((date - first) / 86400000);
+  const week = Math.ceil((days + first.getDay() + 1) / 7);
+  return `${date.getFullYear()}-S${String(week).padStart(2, "0")}`;
+}
+
+function getShift(period) {
+  const hour = Number(String(period ?? "").match(/^(\d{1,2})/)?.[1] ?? 0);
+  if (hour >= 22) return "Ceia";
+  if (hour >= 18) return "Jantar";
+  if (hour >= 15) return "Tarde";
+  return "Almoco";
+}
+
+function walkXlsx(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return walkXlsx(full);
+    return entry.isFile() && entry.name.toLowerCase().endsWith(".xlsx") ? [full] : [];
+  });
+}
+
+function readRows() {
+  const files = walkXlsx(BI_DIR).filter((file) => !normalizeText(path.relative(BI_DIR, file)).toUpperCase().startsWith("FINANCEIRO"));
+  const rows = [];
+
+  for (const file of files) {
+    const workbook = XLSX.readFile(file, { cellDates: true });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+    for (const raw of json) {
+      const date = parseDate(raw["Data"]);
+      const city = normalizeCity(raw["Cidade"] || path.basename(path.dirname(file)));
+      const realHours = toNumber(raw["Horas reais conectado durante os horários"] || raw["Horas reais conectado durante os hor�rios"]);
+      const scheduledHours = toNumber(raw["Duração total dos horários agendados"] || raw["Dura��o total dos hor�rios agendados"]);
+      const orders = toNumber(raw["Pedidos finalizados"]);
+
+      rows.push({
+        date: isoDate(date),
+        dateBr: brDate(date),
+        week: getWeekLabel(date),
+        weekday: date ? date.getDay() : 0,
+        period: String(raw["Período do turno"] || raw["Per�odo do turno"] || ""),
+        criticalFlag: normalizeText(raw["Turnos críticos"] || raw["Turnos cr�ticos"]).toUpperCase(),
+        shift: getShift(raw["Período do turno"] || raw["Per�odo do turno"]),
+        hotzone: String(raw["Hot Zone / Nome da loja"] || "Sem hotzone").trim(),
+        scheduleType: String(raw["Tipo de agendamento"] || ""),
+        id: String(raw["ID do entregador"] || "").trim(),
+        cpf: String(raw["CPF do entregador"] || "").trim(),
+        name: String(raw["Nome do entregador"] || "").trim(),
+        phone: String(raw["Número de telefone"] || raw["N�mero de telefone"] || "").trim(),
+        city,
+        orders,
+        realHours,
+        scheduledHours,
+        tsh: scheduledHours ? realHours / scheduledHours : toPercent(raw["%TSH"]),
+        ar: toPercent(raw["AR"]),
+        caa: toPercent(raw["CAA"]),
+        ot: toPercent(raw["Overtime"]),
+        file: path.relative(__dirname, file),
+      });
+    }
+  }
+
+  return rows.filter((row) => row.date && row.city);
+}
+
+function normalizedKey(value) {
+  return normalizeText(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function rawValue(raw, candidates) {
+  const entries = Object.entries(raw);
+  for (const candidate of candidates) {
+    if (Object.prototype.hasOwnProperty.call(raw, candidate)) return raw[candidate];
+  }
+
+  const normalizedCandidates = candidates.map(normalizedKey);
+  const found = entries.find(([key]) => normalizedCandidates.includes(normalizedKey(key)));
+  return found ? found[1] : "";
+}
+
+function readFinanceRows() {
+  const files = walkXlsx(FINANCE_DIR);
+  const rows = [];
+
+  for (const file of files) {
+    const workbook = XLSX.readFile(file, { cellDates: true });
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+      const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+      for (const raw of json) {
+        const totalDaily = toNumber(rawValue(raw, ["Total diário(R$)", "Total diario(R$)", "Total diário", "Total diario"]));
+        const deliveryGains = toNumber(rawValue(raw, ["Ganhos da entrega(R$)", "Ganhos da entrega"]));
+        const rewards = toNumber(rawValue(raw, ["Recompensas(R$)", "Recompensas"]));
+        const pendingCash = toNumber(rawValue(raw, ["Valor pendente do pedido pago em dinheiro(R$)", "Valor pendente do pedido pago em dinheiro"]));
+        const lossDiscount = toNumber(rawValue(raw, ["Desconto de perdas de pedido(R$)", "Desconto de perdas de pedido"]));
+        const others = toNumber(rawValue(raw, ["Outros(R$)", "Outros"]));
+        const tips = toNumber(rawValue(raw, ["Gorjetas(R$)", "Gorjetas"]));
+        const manualAdjustment = toNumber(rawValue(raw, ["Ajuste manual(R$)", "Ajuste manual"]));
+        const referralRewards = toNumber(rawValue(raw, ["Recompensas por indicação(R$)", "Recompensas por indicacao(R$)", "Recompensas por indicação", "Recompensas por indicacao"]));
+        const meaningfulValue = totalDaily || deliveryGains || rewards || pendingCash || lossDiscount || others || tips || manualAdjustment || referralRewards;
+        if (!meaningfulValue) continue;
+
+        const date = parseDate(rawValue(raw, ["Data", "Date"]));
+        const city = normalizeCity(rawValue(raw, ["Cidade", "City"]) || path.basename(path.dirname(file)));
+        const cpf = String(rawValue(raw, ["CPF do entregador", "CPF"]) || "").trim();
+
+        rows.push({
+          date: isoDate(date),
+          dateBr: brDate(date),
+          week: getWeekLabel(date),
+          city,
+          id: String(rawValue(raw, ["ID do entregador parceiro", "ID do entregador", "ID"]) || "").trim(),
+          name: String(rawValue(raw, ["Nome do entregador", "Entregador"]) || "").trim(),
+          phone: String(rawValue(raw, ["Nº de telefone do entregador", "N° de telefone do entregador", "Numero de telefone do entregador", "Número de telefone do entregador"]) || "").trim(),
+          cpf,
+          totalDaily,
+          deliveryGains,
+          pendingCash,
+          lossDiscount,
+          rewards,
+          others,
+          tips,
+          manualAdjustment,
+          referralRewards,
+          extras: others + tips + manualAdjustment + referralRewards,
+          file: path.relative(__dirname, file),
+        });
+      }
+    }
+  }
+
+  return rows.filter((row) => row.city && (row.cpf || row.name || row.totalDaily));
+}
+
+let data = readRows();
+let financeData = readFinanceRows();
+let loadedAt = new Date();
+let sourceFiles = walkXlsx(BI_DIR);
+
+function reloadData() {
+  data = readRows();
+  financeData = readFinanceRows();
+  loadedAt = new Date();
+  sourceFiles = walkXlsx(BI_DIR);
+  return data;
+}
+
+function latestSourceUpdate() {
+  const timestamps = sourceFiles
+    .map((file) => fs.statSync(file).mtime)
+    .filter(Boolean)
+    .sort((a, b) => b - a);
+  return timestamps[0] || null;
+}
+
+function uniq(values) {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b), "pt-BR"));
+}
+
+function avg(rows, key) {
+  const values = rows.map((row) => row[key]).filter((value) => Number.isFinite(value));
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function sum(rows, key) {
+  return rows.reduce((total, row) => total + (Number(row[key]) || 0), 0);
+}
+
+function distinct(rows, key) {
+  return new Set(rows.map((row) => row[key]).filter(Boolean)).size;
+}
+
+function filterRows(query) {
+  const start = query.start || "";
+  const end = query.end || "";
+  return data.filter((row) => {
+    if (query.city && row.city !== query.city) return false;
+    if (query.hotzone && row.hotzone !== query.hotzone) return false;
+    if (query.cpf && row.cpf !== query.cpf) return false;
+    if (query.week && row.week !== query.week) return false;
+    if (start && row.date < start) return false;
+    if (end && row.date > end) return false;
+    return true;
+  });
+}
+
+function colorForPercent(value) {
+  if (value >= 0.9) return "good";
+  if (value >= 0.75) return "warn";
+  return "bad";
+}
+
+function groupBy(rows, keyGetter) {
+  const map = new Map();
+  for (const row of rows) {
+    const key = keyGetter(row);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(row);
+  }
+  return map;
+}
+
+function summarizeTsh(rows) {
+  const real = sum(rows, "realHours");
+  const meta = sum(rows, "scheduledHours");
+  return { real, meta, tsh: meta ? real / meta : 0 };
+}
+
+function criticalRows(rows) {
+  return rows.filter((row) => [5, 6, 0].includes(row.weekday) && ["Jantar", "Ceia"].includes(row.shift));
+}
+
+function semRotaCount(rows) {
+  const byDriver = groupBy(rows, (row) => row.cpf || row.id);
+  let count = 0;
+  for (const driverRows of byDriver.values()) {
+    if (!driverRows.some((row) => row.orders > 0)) count += 1;
+  }
+  return count;
+}
+
+function buildDashboard(rows) {
+  const cityGroups = groupBy(rows, (row) => row.city);
+  const cityCards = [...cityGroups.entries()]
+    .sort((a, b) => cityOrder.indexOf(a[0]) - cityOrder.indexOf(b[0]))
+    .map(([city, cityRows]) => {
+      const general = summarizeTsh(cityRows);
+      const critical = summarizeTsh(criticalRows(cityRows));
+      const shifts = ["Almoco", "Tarde", "Jantar"].map((shift) => ({
+        label: shift === "Almoco" ? "ALMOÇO" : shift.toUpperCase(),
+        ...summarizeTsh(cityRows.filter((row) => row.shift === shift)),
+      }));
+
+      return {
+        city,
+        orders: sum(cityRows, "orders"),
+        drivers: distinct(cityRows, "cpf"),
+        hours: sum(cityRows, "scheduledHours"),
+        semRota: semRotaCount(cityRows),
+        general,
+        critical,
+        shifts,
+        deficit: Math.max(general.meta - general.real, 0),
+      };
+    });
+
+  const hotzones = [...groupBy(rows, (row) => `${row.city}||${row.hotzone}`).entries()]
+    .map(([key, zoneRows]) => {
+      const [city, hotzone] = key.split("||");
+      const general = summarizeTsh(zoneRows);
+      const critical = summarizeTsh(criticalRows(zoneRows));
+      return {
+        city,
+        hotzone,
+        tsh: general.tsh,
+        critical: critical.tsh,
+        delivered: general.real,
+        goal: general.meta,
+        ar: avg(zoneRows, "ar"),
+        caa: avg(zoneRows, "caa"),
+        ot: avg(zoneRows, "ot"),
+      };
+    })
+    .sort((a, b) => cityOrder.indexOf(a.city) - cityOrder.indexOf(b.city) || a.hotzone.localeCompare(b.hotzone, "pt-BR"));
+
+  const drivers = [...groupBy(rows, (row) => `${row.city}||${row.hotzone}||${row.cpf}||${row.id}`).values()]
+    .map((driverRows) => {
+      const base = driverRows[0];
+      const lastRoute = driverRows
+        .filter((row) => row.orders > 0)
+        .map((row) => row.date)
+        .sort()
+        .at(-1);
+      const general = summarizeTsh(driverRows);
+      const critical = summarizeTsh(criticalRows(driverRows));
+      const days = lastRoute ? Math.floor((new Date() - new Date(`${lastRoute}T00:00:00`)) / 86400000) : 9999;
+      return {
+        city: base.city,
+        hotzone: base.hotzone,
+        id: base.id,
+        cpf: base.cpf,
+        name: base.name,
+        routes: sum(driverRows, "orders"),
+        tsh: general.tsh,
+        critical: critical.tsh,
+        ar: avg(driverRows, "ar"),
+        caa: avg(driverRows, "caa"),
+        ot: avg(driverRows, "ot"),
+        lastRoute: lastRoute ? brDate(new Date(`${lastRoute}T00:00:00`)) : "-",
+        daysNoRoute: days,
+      };
+    })
+    .sort((a, b) => b.daysNoRoute - a.daysNoRoute || a.name.localeCompare(b.name, "pt-BR"));
+
+  const weekly = [...groupBy(rows, (row) => `${row.city}||${row.week}`).entries()]
+    .map(([key, weekRows]) => {
+      const [city, week] = key.split("||");
+      const general = summarizeTsh(weekRows);
+      const critical = summarizeTsh(criticalRows(weekRows));
+      return { city, week, orders: sum(weekRows, "orders"), tsh: general.tsh, critical: critical.tsh };
+    })
+    .sort((a, b) => a.week.localeCompare(b.week) || cityOrder.indexOf(a.city) - cityOrder.indexOf(b.city));
+
+  return {
+    total: {
+      orders: sum(rows, "orders"),
+      drivers: distinct(rows, "cpf"),
+      hours: sum(rows, "scheduledHours"),
+      delivered: sum(rows, "realHours"),
+      semRota: semRotaCount(rows),
+      start: rows.map((row) => row.date).sort()[0] || "",
+      end: rows.map((row) => row.date).sort().at(-1) || "",
+    },
+    cityCards,
+    hotzones,
+    drivers: drivers.slice(0, 300),
+    driverTotal: drivers.length,
+    weekly,
+    colorForPercent,
+  };
+}
+
+function filterFinanceRows(query) {
+  const start = query.start || "";
+  const end = query.end || "";
+  return financeData.filter((row) => {
+    if (query.city && row.city !== query.city) return false;
+    if (start && (!row.date || row.date < start)) return false;
+    if (end && (!row.date || row.date > end)) return false;
+    return true;
+  });
+}
+
+function buildFinance(rows) {
+  const totalDaily = sum(rows, "totalDaily");
+  const deliveryGains = sum(rows, "deliveryGains");
+  const rewards = sum(rows, "rewards");
+  const earningsBase = deliveryGains + rewards;
+  const pendingCash = sum(rows, "pendingCash");
+  const lossDiscount = sum(rows, "lossDiscount");
+  const others = sum(rows, "others");
+  const tips = sum(rows, "tips");
+  const manualAdjustment = sum(rows, "manualAdjustment");
+  const referralRewards = sum(rows, "referralRewards");
+  const extras = others + tips + manualAdjustment + referralRewards;
+  const drivers = distinct(rows, "cpf") || distinct(rows, "name");
+  const ticket = rows.length ? totalDaily / rows.length : 0;
+
+  const rates = [0.10, 0.15, 0.20, 0.25, 0.30];
+  const projections = rates.map((rate) => ({
+    rate,
+      gain: earningsBase * rate,
+      label: `${Math.round(rate * 100)}%`,
+  }));
+
+  const byCity = [...groupBy(rows, (row) => row.city).entries()]
+    .map(([city, groupRows]) => ({
+      city,
+      totalDaily: sum(groupRows, "totalDaily"),
+      deliveryGains: sum(groupRows, "deliveryGains"),
+      rewards: sum(groupRows, "rewards"),
+      pendingCash: sum(groupRows, "pendingCash"),
+      lossDiscount: sum(groupRows, "lossDiscount"),
+      drivers: distinct(groupRows, "cpf") || distinct(groupRows, "name"),
+      records: groupRows.length,
+      earningsBase: sum(groupRows, "deliveryGains") + sum(groupRows, "rewards"),
+      share: earningsBase ? (sum(groupRows, "deliveryGains") + sum(groupRows, "rewards")) / earningsBase : 0,
+      gain10: (sum(groupRows, "deliveryGains") + sum(groupRows, "rewards")) * 0.10,
+      gain20: (sum(groupRows, "deliveryGains") + sum(groupRows, "rewards")) * 0.20,
+      gain30: (sum(groupRows, "deliveryGains") + sum(groupRows, "rewards")) * 0.30,
+    }))
+    .sort((a, b) => b.totalDaily - a.totalDaily);
+
+  const byDriver = [...groupBy(rows, (row) => row.cpf || row.name || row.id).values()]
+    .map((groupRows) => {
+      const base = groupRows[0];
+      const total = sum(groupRows, "totalDaily");
+      const driverEarnings = sum(groupRows, "deliveryGains") + sum(groupRows, "rewards");
+      return {
+        city: base.city,
+        id: base.id,
+        cpf: base.cpf,
+        name: base.name || "Sem nome",
+        totalDaily: total,
+        earningsBase: driverEarnings,
+        deliveryGains: sum(groupRows, "deliveryGains"),
+        rewards: sum(groupRows, "rewards"),
+        pendingCash: sum(groupRows, "pendingCash"),
+        lossDiscount: sum(groupRows, "lossDiscount"),
+        gain20: driverEarnings * 0.20,
+      };
+    })
+    .sort((a, b) => b.totalDaily - a.totalDaily)
+    .slice(0, 300);
+
+  const byDate = [...groupBy(rows.filter((row) => row.date), (row) => row.date).entries()]
+    .map(([date, groupRows]) => ({
+      date,
+      dateBr: brDate(new Date(`${date}T00:00:00`)),
+      totalDaily: sum(groupRows, "totalDaily"),
+      deliveryGains: sum(groupRows, "deliveryGains"),
+      rewards: sum(groupRows, "rewards"),
+      earningsBase: sum(groupRows, "deliveryGains") + sum(groupRows, "rewards"),
+      gain20: (sum(groupRows, "deliveryGains") + sum(groupRows, "rewards")) * 0.20,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const composition = [
+    { label: "Corridas em dinheiro", value: deliveryGains, color: "orange" },
+    { label: "Recompensas", value: rewards, color: "green" },
+    { label: "Extras", value: extras, color: "blue" },
+    { label: "Pendente dinheiro", value: pendingCash, color: "yellow" },
+    { label: "Descontos", value: lossDiscount, color: "bad" },
+  ];
+
+  return {
+    rowCount: rows.length,
+    total: {
+      totalDaily,
+      deliveryGains,
+      rewards,
+      earningsBase,
+      pendingCash,
+      lossDiscount,
+      extras,
+      others,
+      tips,
+      manualAdjustment,
+      referralRewards,
+      drivers,
+      ticket,
+      start: rows.map((row) => row.date).filter(Boolean).sort()[0] || "",
+      end: rows.map((row) => row.date).filter(Boolean).sort().at(-1) || "",
+    },
+    projections,
+    byCity,
+    byDriver,
+    byDate,
+    composition,
+  };
+}
+
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/api/meta", (_req, res) => {
+  res.json({
+    rowCount: data.length,
+    files: uniq(data.map((row) => row.file)),
+    sourcePath: path.relative(__dirname, BI_DIR) || "BI",
+    fileCount: sourceFiles.length,
+    financeRowCount: financeData.length,
+    loadedAt: loadedAt.toISOString(),
+    latestSourceUpdate: latestSourceUpdate()?.toISOString() || "",
+    cities: cityOrder.filter((city) => data.some((row) => row.city === city)),
+    hotzones: uniq(data.map((row) => row.hotzone)),
+    cpfs: uniq(data.map((row) => row.cpf)),
+    weeks: uniq(data.map((row) => row.week)),
+    minDate: data.map((row) => row.date).sort()[0] || "",
+    maxDate: data.map((row) => row.date).sort().at(-1) || "",
+    financeMinDate: financeData.map((row) => row.date).filter(Boolean).sort()[0] || "",
+    financeMaxDate: financeData.map((row) => row.date).filter(Boolean).sort().at(-1) || "",
+  });
+});
+
+app.post("/api/reload", (_req, res) => {
+  reloadData();
+  res.json({
+    ok: true,
+    rowCount: data.length,
+    financeRowCount: financeData.length,
+    fileCount: sourceFiles.length,
+    loadedAt: loadedAt.toISOString(),
+    latestSourceUpdate: latestSourceUpdate()?.toISOString() || "",
+  });
+});
+
+app.get("/api/dashboard", (req, res) => {
+  const rows = filterRows(req.query);
+  res.json(buildDashboard(rows));
+});
+
+app.get("/api/finance", (req, res) => {
+  const rows = filterFinanceRows(req.query);
+  res.json(buildFinance(rows));
+});
+
+app.listen(PORT, () => {
+  console.log(`Dashboard BI disponível em http://localhost:${PORT}`);
+  console.log(`${data.length} linhas carregadas de ${walkXlsx(BI_DIR).length} arquivos .xlsx`);
+});

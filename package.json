@@ -1,0 +1,20 @@
+{
+  "name": "receba",
+  "version": "1.0.0",
+  "description": "Dashboards operacional e financeiro para a pasta BI",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1",
+    "xlsx": "^0.18.5"
+  }
+}
