@@ -134,6 +134,7 @@ function createSupabaseApi() {
     try {
       const profile = await loadProfile(data.user);
       if (!profile.active) return res.status(403).json({ error: "Usuario inativo." });
+      if (password === DEFAULT_PASSWORD) profile.must_change_password = true;
       res.json({
         accessToken: data.session.access_token,
         refreshToken: data.session.refresh_token,

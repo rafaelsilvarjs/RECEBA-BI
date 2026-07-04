@@ -630,6 +630,7 @@ function makeTransporter() {
 }
 
 app.post("/api/login", (req, res) => {
+  if (supabase.enabled) return res.json({ ok: false, message: "Login local desativado. Peça ao administrador para criar seu acesso." });
   const email = String(req.body.email || "").toLowerCase().trim();
   const password = String(req.body.password || "");
   if (!isAuthEmail(email)) return res.json({ ok: false, message: "Email sem acesso liberado." });
@@ -655,6 +656,7 @@ app.post("/api/login", (req, res) => {
 });
 
 app.post("/api/set-password", (req, res) => {
+  if (supabase.enabled) return res.json({ ok: false, message: "Login local desativado." });
   const email = String(req.body.email || "").toLowerCase().trim();
   const password = String(req.body.password || "");
   if (!isAuthEmail(email)) return res.json({ ok: false, message: "Email sem acesso liberado." });
@@ -668,6 +670,7 @@ app.post("/api/set-password", (req, res) => {
 });
 
 app.post("/api/forgot-password", async (req, res) => {
+  if (supabase.enabled) return res.json({ ok: false, message: "Login local desativado." });
   const email = String(req.body.email || "").toLowerCase().trim();
   if (!isAuthEmail(email)) {
     return res.json({ ok: true }); // não revelar se email existe
@@ -700,6 +703,7 @@ app.post("/api/forgot-password", async (req, res) => {
 });
 
 app.post("/api/verify-reset", (req, res) => {
+  if (supabase.enabled) return res.json({ ok: false, message: "Login local desativado." });
   const email = String(req.body.email || "").toLowerCase().trim();
   const code = String(req.body.code || "").trim();
   const password = String(req.body.password || "");
