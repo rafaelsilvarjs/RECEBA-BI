@@ -6,6 +6,7 @@ const state = {
   meta: null,
   dashboard: null,
   finance: null,
+  dailyResult: null,
   user: null,
   users: [],
   authMode: "local",
@@ -182,6 +183,7 @@ function applyUserAccess() {
   document.querySelector(".users-link").classList.toggle("hidden", !canManageUsers);
   document.querySelector('[data-op-page="kpis"].side-sub-link').classList.toggle("hidden", !localMode && !permissions.kpis);
   document.querySelector('[data-op-page="cadastro"].side-sub-link').classList.toggle("hidden", !localMode && !permissions.cadastro);
+  document.querySelector('[data-op-page="resultado"].side-sub-link').classList.toggle("hidden", !localMode && !permissions.kpis && !permissions.cadastro);
   $("refreshDataButton").classList.toggle("hidden", !localMode && !permissions.atualizar_bi);
   if (!canSeeFinance && state.view === "financeiro") setOperationalPage("kpis");
   if (!canManageUsers && state.view === "usuarios") setOperationalPage("kpis");
@@ -214,8 +216,8 @@ async function validateLogin(email, password) {
 
 function queryParams() {
   const params = new URLSearchParams();
-  ["city", "hotzone", "cpf", "week", "start", "end"].forEach((id) => {
-    if ($(id).value) params.set(id, $(id).value);
+  ["city", "hotzone", "cpf", "id", "name", "week", "start", "end"].forEach((filterId) => {
+    if ($(filterId).value) params.set(filterId, $(filterId).value);
   });
   return params.toString();
 }
@@ -291,6 +293,8 @@ async function loadMeta() {
   buildSearchSelect("city", state.meta.cities);
   buildSearchSelect("hotzone", state.meta.hotzones);
   buildSearchSelect("cpf", state.meta.cpfs);
+  buildSearchSelect("id", state.meta.ids);
+  buildSearchSelect("name", state.meta.names);
   buildSearchSelect("week", state.meta.weeks);
   $("start").value = state.meta.minDate;
   $("end").value = state.meta.maxDate;
@@ -373,7 +377,7 @@ function resetSearchSelect(filterId) {
 }
 
 function clearFilters() {
-  ["city", "hotzone", "cpf", "week"].forEach(resetSearchSelect);
+  ["city", "hotzone", "cpf", "id", "name", "week"].forEach(resetSearchSelect);
   const finance = state.view === "financeiro";
   $("start").value = finance ? state.meta?.financeMinDate || "" : state.meta?.minDate || "";
   $("end").value = finance ? state.meta?.financeMaxDate || "" : state.meta?.maxDate || "";
@@ -423,12 +427,14 @@ async function refresh() {
   const params = queryParams();
   const canLoadOperational = !state.supabaseEnabled || hasOperationalAccess(state.user);
   const canLoadFinance = !state.supabaseEnabled || hasFinancialAccess(state.user);
-  const [dashboard, finance] = await Promise.all([
+  const [dashboard, finance, dailyResult] = await Promise.all([
     canLoadOperational ? dataJson(`/api/dashboard?${params}`) : Promise.resolve(null),
     canLoadFinance ? dataJson(`/api/finance?${financeQueryParams()}`) : Promise.resolve(null),
+    canLoadOperational ? dataJson(`/api/daily-result?${params}`) : Promise.resolve(null),
   ]);
   state.dashboard = dashboard;
   state.finance = finance;
+  state.dailyResult = dailyResult;
   render();
 }
 
@@ -894,6 +900,56 @@ function render() {
     renderWeeklyCharts("cadastroWeeklyCharts");
   }
   if (state.finance) renderFinance();
+  renderDailyResult();
+}
+
+function dailyResultRow(driver, rank) {
+  return `
+    <tr>
+      <td class="num">${rank}</td>
+      <td>${escapeHtml(driver.id)}</td>
+      <td>${escapeHtml(driver.name)}</td>
+      <td class="num">${fmtInt(driver.orders)}</td>
+      <td class="num ${pctClass(driver.tsh)}">${fmtPct(driver.tsh)}</td>
+      <td class="num ${pctClass(driver.ar)}">${fmtPct(driver.ar)}</td>
+      <td class="num ${pctClass(driver.caa)}">${fmtPct(driver.caa)}</td>
+      <td class="num ${pctClass(driver.ot)}">${fmtPct(driver.ot)}</td>
+    </tr>`;
+}
+
+function dailyResultTableHead() {
+  return `<thead><tr><th>#</th><th>ID</th><th>ENTREGADOR</th><th>PEDIDOS</th><th>TSH</th><th>AR</th><th>CAA</th><th>OT</th></tr></thead>`;
+}
+
+function renderDailyResult() {
+  const container = $("dailyResultCities");
+  if (!state.dailyResult || !state.dailyResult.cities.length) {
+    container.innerHTML = `<div class="finance-empty-state">Nenhum entregador encontrado para os filtros selecionados.</div>`;
+    return;
+  }
+
+  container.innerHTML = state.dailyResult.cities.map((group) => `
+    <section class="panel page-panel daily-result-city">
+      <div class="panel-head">
+        <h2 class="city-cell ${cityToneClass(group.city)}">${group.city}</h2>
+        <span>${group.top.length + group.rest.length} entregadores no periodo</span>
+      </div>
+      <h3 class="daily-result-subhead">Top 5 melhores</h3>
+      <div class="table-wrap">
+        <table>
+          ${dailyResultTableHead()}
+          <tbody>${group.top.map((driver, index) => dailyResultRow(driver, index + 1)).join("") || `<tr><td colspan="8">Sem dados no periodo.</td></tr>`}</tbody>
+        </table>
+      </div>
+      ${group.rest.length ? `
+      <h3 class="daily-result-subhead">Demais entregadores</h3>
+      <div class="table-wrap tall">
+        <table>
+          ${dailyResultTableHead()}
+          <tbody>${group.rest.map((driver, index) => dailyResultRow(driver, index + 6)).join("")}</tbody>
+        </table>
+      </div>` : ""}
+    </section>`).join("");
 }
 
 function configureFiltersForView(view) {
@@ -989,6 +1045,10 @@ function setOperationalPage(page) {
       title: "Dash Operacional - Cadastro",
       subtitle: "Grafico de linhas no topo, resumo por cidade e cadastro completo dos entregadores.",
     },
+    resultado: {
+      title: "Dash Operacional - Resultado Diario",
+      subtitle: "Top 5 melhores entregadores por cidade e os demais logo abaixo, com pedidos, TSH, AR, CAA e overtime.",
+    },
     evolucao: {
       title: "Dash Operacional - Evolucao",
       subtitle: "Compare corridas, TSH e critical por semana em cada cidade.",
@@ -1011,8 +1071,8 @@ document.querySelectorAll(".side-sub-link").forEach((button) => {
   button.addEventListener("click", () => setOperationalPage(button.dataset.opPage));
 });
 
-["city", "hotzone", "cpf", "week", "start", "end"].forEach((id) => {
-  $(id).addEventListener("change", refresh);
+["city", "hotzone", "cpf", "id", "name", "week", "start", "end"].forEach((filterId) => {
+  $(filterId).addEventListener("change", refresh);
 });
 
 $("clearFiltersButton").addEventListener("click", clearFilters);

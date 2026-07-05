@@ -270,6 +270,8 @@ function filterRows(query) {
     if (query.city && row.city !== query.city) return false;
     if (query.hotzone && row.hotzone !== query.hotzone) return false;
     if (query.cpf && row.cpf !== query.cpf) return false;
+    if (query.id && row.id !== query.id) return false;
+    if (query.name && row.name !== query.name) return false;
     if (query.week && row.week !== query.week) return false;
     if (start && row.date < start) return false;
     if (end && row.date > end) return false;
@@ -411,6 +413,41 @@ function buildDashboard(rows) {
     weekly,
     colorForPercent,
   };
+}
+
+function buildDailyResult(rows) {
+  const drivers = [...groupBy(rows, (row) => `${row.city}||${row.cpf}||${row.id}`).values()]
+    .map((driverRows) => {
+      const base = driverRows[0];
+      const general = summarizeTsh(driverRows);
+      return {
+        city: base.city,
+        id: base.id,
+        cpf: base.cpf,
+        name: base.name,
+        orders: sum(driverRows, "orders"),
+        tsh: general.tsh,
+        ar: avg(driverRows, "ar"),
+        caa: avg(driverRows, "caa"),
+        ot: avg(driverRows, "ot"),
+      };
+    })
+    .filter((driver) => driver.name || driver.cpf || driver.id);
+
+  const cities = cityOrder
+    .filter((city) => drivers.some((driver) => driver.city === city))
+    .map((city) => {
+      const cityDrivers = drivers
+        .filter((driver) => driver.city === city)
+        .sort((a, b) => b.tsh - a.tsh || b.orders - a.orders);
+      return {
+        city,
+        top: cityDrivers.slice(0, 5),
+        rest: cityDrivers.slice(5),
+      };
+    });
+
+  return { cities };
 }
 
 function filterFinanceRows(query) {
@@ -557,6 +594,8 @@ app.get("/api/meta", (_req, res) => {
     cities: cityOrder.filter((city) => data.some((row) => row.city === city)),
     hotzones: uniq(data.map((row) => row.hotzone)),
     cpfs: uniq(data.map((row) => row.cpf)),
+    ids: uniq(data.map((row) => row.id)),
+    names: uniq(data.map((row) => row.name)),
     weeks: uniq(data.map((row) => row.week)),
     minDate: data.map((row) => row.date).sort()[0] || "",
     maxDate: data.map((row) => row.date).sort().at(-1) || "",
@@ -585,6 +624,11 @@ app.get("/api/dashboard", supabase.authorize("kpis", "cadastro"), (req, res) => 
 app.get("/api/finance", supabase.authorize("financeiro"), (req, res) => {
   const rows = filterFinanceRows(req.query);
   res.json(buildFinance(rows));
+});
+
+app.get("/api/daily-result", supabase.authorize("kpis", "cadastro"), (req, res) => {
+  const rows = filterRows(req.query);
+  res.json(buildDailyResult(rows));
 });
 
 // ── Auth ──────────────────────────────────────────────────────────────────────

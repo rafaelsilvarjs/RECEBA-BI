@@ -134,6 +134,7 @@
             <div class="side-subnav">
               <button class="side-sub-link active" data-op-page="kpis">KPIs</button>
               <button class="side-sub-link" data-op-page="cadastro">Cadastro</button>
+              <button class="side-sub-link" data-op-page="resultado">Resultado Diario</button>
             </div>
           </div>
           <button class="side-link finance-link hidden" data-view="financeiro">
@@ -175,6 +176,8 @@
           <label data-filter-control="city">Cidade<div class="search-select" data-filter="city"></div><input id="city" type="hidden" /></label>
           <label data-filter-control="hotzone">Hot Zone / Nome da loja<div class="search-select" data-filter="hotzone"></div><input id="hotzone" type="hidden" /></label>
           <label data-filter-control="cpf">CPF do entregador<div class="search-select" data-filter="cpf"></div><input id="cpf" type="hidden" /></label>
+          <label data-filter-control="id">ID do entregador<div class="search-select" data-filter="id"></div><input id="id" type="hidden" /></label>
+          <label data-filter-control="name">Nome do entregador<div class="search-select" data-filter="name"></div><input id="name" type="hidden" /></label>
           <label data-filter-control="week">Semana Ano<div class="search-select" data-filter="week"></div><input id="week" type="hidden" /></label>
           <label data-filter-control="start">Data inicial<input id="start" type="date" /></label>
           <label data-filter-control="end">Data final<input id="end" type="date" /></label>
@@ -189,6 +192,7 @@
             <section class="operational-tabs hidden">
               <button class="op-tab active" data-op-page="kpis">KPIs</button>
               <button class="op-tab" data-op-page="cadastro">Cadastro</button>
+              <button class="op-tab" data-op-page="resultado">Resultado Diario</button>
               <button class="op-tab" data-op-page="evolucao">Evolucao</button>
             </section>
 
@@ -223,6 +227,10 @@
                 </div>
                 <div class="table-wrap tall"><table id="driverTable"></table></div>
               </section>
+            </section>
+
+            <section class="op-page" id="op-resultado">
+              <div id="dailyResultCities"></div>
             </section>
 
             <section class="op-page" id="op-evolucao">

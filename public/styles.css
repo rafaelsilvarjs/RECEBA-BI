@@ -1245,6 +1245,19 @@ input {
 
 .table-wrap.tall { max-height: 520px; }
 
+.daily-result-city + .daily-result-city { margin-top: 14px; }
+
+.daily-result-subhead {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .4px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.daily-result-subhead:first-of-type { margin-top: 4px; }
+
 table {
   width: 100%;
   min-width: 900px;
