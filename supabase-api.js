@@ -8,6 +8,7 @@ const DEFAULT_PERMISSIONS = {
   cadastro: true,
   financeiro: false,
   atualizar_bi: false,
+  atualizar_bi_financeiro: false,
   usuarios: false,
 };
 
@@ -50,7 +51,7 @@ function createSupabaseApi() {
       access_area: power ? "ambos" : "operacional",
       active: true,
       permissions: power
-        ? { ...DEFAULT_PERMISSIONS, financeiro: true, atualizar_bi: true, usuarios: true }
+        ? { ...DEFAULT_PERMISSIONS, financeiro: true, atualizar_bi: true, atualizar_bi_financeiro: true, usuarios: true }
         : DEFAULT_PERMISSIONS,
       must_change_password: Boolean(user.user_metadata?.must_change_password),
     };

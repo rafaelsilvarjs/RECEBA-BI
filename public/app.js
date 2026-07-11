@@ -41,6 +41,9 @@ const fmtPct = (value) => `${((value || 0) * 100).toLocaleString("pt-BR", { mini
 const fmtDateTime = (value) => value
   ? new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
   : "--";
+const fmtDate = (value) => value
+  ? new Date(value).toLocaleDateString("pt-BR")
+  : "--";
 const normalizeText = (value) => String(value ?? "")
   .normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "");
@@ -105,6 +108,28 @@ function hasUsersAccess(user) {
     || normalizeEmail(user.email) === FULL_ACCESS_EMAIL;
 }
 
+function hasUploadAccess(user) {
+  if (state.authMode === "local") return true;
+  return user?.role === "admin"
+    || Boolean(user?.permissions?.atualizar_bi)
+    || Boolean(user?.permissions?.atualizar_bi_financeiro)
+    || normalizeEmail(user?.email) === FULL_ACCESS_EMAIL;
+}
+
+function canUploadTarget(user, target) {
+  if (state.authMode === "local") return true;
+  if (user?.role === "admin" || normalizeEmail(user?.email) === FULL_ACCESS_EMAIL) return true;
+  return target === "FINANCEIRO"
+    ? Boolean(user?.permissions?.atualizar_bi_financeiro)
+    : Boolean(user?.permissions?.atualizar_bi);
+}
+
+function applyUploadCardAccess() {
+  document.querySelectorAll(".upload-card").forEach((card) => {
+    card.classList.toggle("hidden", !canUploadTarget(state.user, card.dataset.target));
+  });
+}
+
 function hasOperationalAccess(user) {
   if (state.authMode === "local") return true;
   return ["operacional", "ambos"].includes(user?.access_area)
@@ -140,6 +165,7 @@ function showLogin() {
   $("loginPassword").value = "";
   document.querySelector(".finance-link").classList.add("hidden");
   document.querySelector(".users-link").classList.add("hidden");
+  document.querySelector(".upload-link").classList.add("hidden");
   setLoginMessage("");
 }
 
@@ -175,18 +201,22 @@ function showResetForm(email) {
 function applyUserAccess() {
   const canSeeFinance = hasFinancialAccess(state.user);
   const canManageUsers = hasUsersAccess(state.user);
+  const canUpload = hasUploadAccess(state.user);
   const canSeeOperational = hasOperationalAccess(state.user);
   const permissions = state.user?.permissions || {};
   const localMode = state.authMode === "local";
   document.querySelector(".side-group").classList.toggle("hidden", !canSeeOperational);
   document.querySelector(".finance-link").classList.toggle("hidden", !canSeeFinance);
   document.querySelector(".users-link").classList.toggle("hidden", !canManageUsers);
+  document.querySelector(".upload-link").classList.toggle("hidden", !canUpload);
+  applyUploadCardAccess();
   document.querySelector('[data-op-page="kpis"].side-sub-link').classList.toggle("hidden", !localMode && !permissions.kpis);
   document.querySelector('[data-op-page="cadastro"].side-sub-link').classList.toggle("hidden", !localMode && !permissions.cadastro);
   document.querySelector('[data-op-page="resultado"].side-sub-link').classList.toggle("hidden", !localMode && !permissions.kpis && !permissions.cadastro);
   $("refreshDataButton").classList.toggle("hidden", !localMode && !permissions.atualizar_bi);
   if (!canSeeFinance && state.view === "financeiro") setOperationalPage("kpis");
   if (!canManageUsers && state.view === "usuarios") setOperationalPage("kpis");
+  if (!canUpload && state.view === "upload") setOperationalPage("kpis");
 }
 
 function openApp(user) {
@@ -265,8 +295,9 @@ async function refreshSupabaseSession() {
 }
 
 async function authFetch(url, options = {}, retry = true) {
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const headers = {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(options.headers || {}),
   };
   if (state.accessToken) headers.Authorization = `Bearer ${state.accessToken}`;
@@ -660,7 +691,8 @@ const permissionLabels = {
   kpis: "Dashboard KPIs",
   cadastro: "Cadastro",
   financeiro: "Dash Financeiro",
-  atualizar_bi: "Atualizar BI",
+  atualizar_bi: "Atualizar BI (cidades)",
+  atualizar_bi_financeiro: "Atualizar BI (financeiro)",
   usuarios: "Gerenciar Usuarios",
 };
 
@@ -954,7 +986,7 @@ function renderDailyResult() {
 
 function configureFiltersForView(view) {
   const filters = document.querySelector(".filters");
-  if (view === "usuarios") {
+  if (view === "usuarios" || view === "upload") {
     filters.classList.add("hidden");
     return;
   }
@@ -985,6 +1017,10 @@ function setView(view) {
     setOperationalPage(state.opPage || "kpis");
     return;
   }
+  if (view === "upload" && !hasUploadAccess(state.user)) {
+    setOperationalPage(state.opPage || "kpis");
+    return;
+  }
   state.view = view;
   document.querySelectorAll(".side-link, .view").forEach((element) => element.classList.remove("active"));
   document.querySelector(`.side-link[data-view="${view}"]`).classList.add("active");
@@ -1006,6 +1042,11 @@ function setView(view) {
       title: "Usuarios",
       subtitle: "Gerencie acessos, perfis e permissoes usando Supabase.",
     },
+    upload: {
+      eyebrow: "ADMINISTRACAO",
+      title: "Upload BI",
+      subtitle: "Envie os relatorios .xlsx atualizados por cidade ou financeiro.",
+    },
   };
   const copy = pageCopy[view];
   $("pageEyebrow").textContent = copy.eyebrow;
@@ -1018,6 +1059,9 @@ function setView(view) {
     refresh();
   } else if (view === "usuarios") {
     loadUsers();
+  } else if (view === "upload") {
+    applyUploadCardAccess();
+    loadBiFiles();
   }
 }
 
@@ -1275,6 +1319,7 @@ $("createUserForm").addEventListener("submit", async (event) => {
     cadastro: accessArea !== "financeiro",
     financeiro: accessArea !== "operacional",
     atualizar_bi: role === "admin",
+    atualizar_bi_financeiro: role === "admin",
     usuarios: role === "admin",
   };
 
@@ -1302,6 +1347,146 @@ $("createUserForm").addEventListener("submit", async (event) => {
 
 $("reloadUsersButton").addEventListener("click", loadUsers);
 bindUsersEvents();
+
+function setUploadStatus(card, text, tone) {
+  const status = card.querySelector('[data-role="status"]');
+  status.textContent = text;
+  status.className = tone ? `upload-status ${tone}` : "upload-status";
+}
+
+function logUpload(card, text, tone) {
+  const log = card.querySelector('[data-role="log"]');
+  const item = document.createElement("li");
+  if (tone) item.className = tone;
+  item.textContent = text;
+  log.prepend(item);
+  while (log.children.length > 6) log.removeChild(log.lastChild);
+}
+
+async function uploadBiFiles(card, fileList) {
+  const target = card.dataset.target;
+  const files = Array.from(fileList || []).filter((file) => /\.xlsx$/i.test(file.name));
+  if (!files.length) return;
+
+  setUploadStatus(card, "Enviando...", "busy");
+  const formData = new FormData();
+  formData.append("target", target);
+  files.forEach((file) => formData.append("files", file));
+
+  try {
+    const response = state.supabaseEnabled
+      ? await authFetch("/api/upload-bi", { method: "POST", body: formData })
+      : await fetch("/api/upload-bi", { method: "POST", body: formData });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) throw new Error(result.error || "Erro ao enviar arquivo.");
+
+    setUploadStatus(card, "Atualizado", "ok");
+    result.uploaded.forEach((name) => logUpload(card, `${name} enviado`, "ok"));
+
+    await loadBiFiles();
+    state.meta = await getJson("/api/meta");
+    updateSidebarDataInfo(state.meta);
+    if (state.user) await refresh();
+  } catch (error) {
+    setUploadStatus(card, "Erro", "error");
+    logUpload(card, error.message, "error");
+  } finally {
+    setTimeout(() => setUploadStatus(card, "Pronto"), 2500);
+  }
+}
+
+function fmtFileSize(bytes) {
+  if (!bytes) return "0 KB";
+  const kb = bytes / 1024;
+  return kb < 1024 ? `${kb.toFixed(0)} KB` : `${(kb / 1024).toFixed(1)} MB`;
+}
+
+function renderBiFiles() {
+  document.querySelectorAll(".upload-card").forEach((card) => {
+    const files = state.biFiles?.[card.dataset.target] || [];
+    const list = card.querySelector('[data-role="files-list"]');
+    const count = card.querySelector('[data-role="files-count"]');
+    if (!list || !count) return;
+    count.textContent = `${files.length} arquivo${files.length === 1 ? "" : "s"}`;
+    list.innerHTML = files.length
+      ? files.map((file) => `
+        <li>
+          <div class="file-info">
+            <span class="file-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+            <span class="file-meta">${fmtFileSize(file.size)} · ${fmtDate(file.mtime)}</span>
+          </div>
+          <button type="button" class="delete-bi-file" data-file="${escapeHtml(file.name)}" aria-label="Excluir arquivo" title="Excluir arquivo">×</button>
+        </li>`).join("")
+      : `<li class="empty">Nenhum arquivo enviado ainda.</li>`;
+  });
+}
+
+async function loadBiFiles() {
+  try {
+    const data = state.supabaseEnabled ? await authJson("/api/bi-files") : await getJson("/api/bi-files");
+    state.biFiles = data.files || {};
+  } catch (error) {
+    console.error("Erro ao carregar arquivos do BI:", error);
+    state.biFiles = {};
+  }
+  renderBiFiles();
+}
+
+async function deleteBiFile(card, filename) {
+  const target = card.dataset.target;
+  if (!window.confirm(`Excluir "${filename}"? Essa acao nao pode ser desfeita.`)) return;
+  try {
+    const query = `target=${encodeURIComponent(target)}&filename=${encodeURIComponent(filename)}`;
+    const response = state.supabaseEnabled
+      ? await authFetch(`/api/bi-files?${query}`, { method: "DELETE" })
+      : await fetch(`/api/bi-files?${query}`, { method: "DELETE" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) throw new Error(result.error || "Erro ao excluir arquivo.");
+
+    logUpload(card, `${filename} excluido`, "ok");
+    await loadBiFiles();
+    state.meta = await getJson("/api/meta");
+    updateSidebarDataInfo(state.meta);
+    if (state.user) await refresh();
+  } catch (error) {
+    logUpload(card, error.message, "error");
+  }
+}
+
+function bindUploadEvents() {
+  document.querySelectorAll(".upload-card").forEach((card) => {
+    const dropzone = card.querySelector('[data-role="dropzone"]');
+    const input = card.querySelector('[data-role="input"]');
+
+    input.addEventListener("change", () => {
+      uploadBiFiles(card, input.files);
+      input.value = "";
+    });
+
+    ["dragover", "dragenter"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.add("dragover");
+      });
+    });
+    ["dragleave", "dragend"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, () => dropzone.classList.remove("dragover"));
+    });
+    dropzone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dropzone.classList.remove("dragover");
+      uploadBiFiles(card, event.dataTransfer.files);
+    });
+
+    card.querySelector('[data-role="files-list"]')?.addEventListener("click", (event) => {
+      const button = event.target.closest(".delete-bi-file");
+      if (!button) return;
+      deleteBiFile(card, button.dataset.file);
+    });
+  });
+}
+
+bindUploadEvents();
 
 $("refreshDataButton").addEventListener("click", async () => {
   const button = $("refreshDataButton");

@@ -145,6 +145,10 @@
             <span class="user-icon"></span>
             Usuarios
           </button>
+          <button class="side-link upload-link hidden" data-view="upload">
+            <span class="dot orange"></span>
+            Upload BI
+          </button>
         </nav>
 
         <div class="sidebar-footer">
@@ -341,6 +345,89 @@
             </section>
 
             <section class="users-list" id="usersList"></section>
+          </section>
+
+          <section id="upload" class="view">
+            <section class="user-create-panel">
+              <div class="users-heading">
+                <div>
+                  <span class="eyebrow">ADMINISTRACAO</span>
+                  <h2>Upload de Relatorios BI</h2>
+                  <p>Envie o .xlsx atualizado direto na cidade certa. Os dados recarregam automaticamente, sem precisar mexer no Git ou na Railway.</p>
+                </div>
+              </div>
+            </section>
+
+            <h3 class="upload-section-title">Cidades</h3>
+            <section class="upload-grid" id="uploadGrid">
+              <article class="upload-card" data-target="SÃO PAULO">
+                <header><h3>Sao Paulo</h3><span class="upload-status" data-role="status">Pronto</span></header>
+                <label class="upload-dropzone" data-role="dropzone">
+                  <input type="file" accept=".xlsx" multiple hidden data-role="input" />
+                  <span>Arraste o .xlsx ou clique</span>
+                </label>
+                <ul class="upload-log" data-role="log"></ul>
+                <div class="upload-files">
+                  <div class="upload-files-head"><span>Arquivos importados</span><small data-role="files-count"></small></div>
+                  <ul class="upload-files-list" data-role="files-list"></ul>
+                </div>
+              </article>
+
+              <article class="upload-card" data-target="GOIANIA">
+                <header><h3>Goiania</h3><span class="upload-status" data-role="status">Pronto</span></header>
+                <label class="upload-dropzone" data-role="dropzone">
+                  <input type="file" accept=".xlsx" multiple hidden data-role="input" />
+                  <span>Arraste o .xlsx ou clique</span>
+                </label>
+                <ul class="upload-log" data-role="log"></ul>
+                <div class="upload-files">
+                  <div class="upload-files-head"><span>Arquivos importados</span><small data-role="files-count"></small></div>
+                  <ul class="upload-files-list" data-role="files-list"></ul>
+                </div>
+              </article>
+
+              <article class="upload-card" data-target="CURITIBA">
+                <header><h3>Curitiba</h3><span class="upload-status" data-role="status">Pronto</span></header>
+                <label class="upload-dropzone" data-role="dropzone">
+                  <input type="file" accept=".xlsx" multiple hidden data-role="input" />
+                  <span>Arraste o .xlsx ou clique</span>
+                </label>
+                <ul class="upload-log" data-role="log"></ul>
+                <div class="upload-files">
+                  <div class="upload-files-head"><span>Arquivos importados</span><small data-role="files-count"></small></div>
+                  <ul class="upload-files-list" data-role="files-list"></ul>
+                </div>
+              </article>
+
+              <article class="upload-card" data-target="RIO DE JANEIRO">
+                <header><h3>Rio de Janeiro</h3><span class="upload-status" data-role="status">Pronto</span></header>
+                <label class="upload-dropzone" data-role="dropzone">
+                  <input type="file" accept=".xlsx" multiple hidden data-role="input" />
+                  <span>Arraste o .xlsx ou clique</span>
+                </label>
+                <ul class="upload-log" data-role="log"></ul>
+                <div class="upload-files">
+                  <div class="upload-files-head"><span>Arquivos importados</span><small data-role="files-count"></small></div>
+                  <ul class="upload-files-list" data-role="files-list"></ul>
+                </div>
+              </article>
+            </section>
+
+            <h3 class="upload-section-title">Financeiro <small>acesso separado</small></h3>
+            <section class="upload-grid upload-grid-single">
+              <article class="upload-card upload-card-finance" data-target="FINANCEIRO">
+                <header><h3>Financeiro</h3><span class="upload-status" data-role="status">Pronto</span></header>
+                <label class="upload-dropzone" data-role="dropzone">
+                  <input type="file" accept=".xlsx" multiple hidden data-role="input" />
+                  <span>Arraste o .xlsx ou clique</span>
+                </label>
+                <ul class="upload-log" data-role="log"></ul>
+                <div class="upload-files">
+                  <div class="upload-files-head"><span>Arquivos importados</span><small data-role="files-count"></small></div>
+                  <ul class="upload-files-list" data-role="files-list"></ul>
+                </div>
+              </article>
+            </section>
           </section>
         </main>
       </section>

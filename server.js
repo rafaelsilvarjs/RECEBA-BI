@@ -2,6 +2,7 @@ require("dotenv").config();
 const path = require("path");
 const fs = require("fs");
 const express = require("express");
+const multer = require("multer");
 const XLSX = require("xlsx");
 const nodemailer = require("nodemailer");
 const { createSupabaseApi } = require("./supabase-api");
@@ -24,6 +25,55 @@ function configuredBiDir() {
 const BI_DIR = configuredBiDir();
 const FINANCE_DIR = path.join(BI_DIR, "FINANCEIRO");
 const supabase = createSupabaseApi();
+
+const UPLOAD_TARGETS = ["CURITIBA", "GOIANIA", "RIO DE JANEIRO", "SÃO PAULO", "FINANCEIRO"];
+
+const biUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const target = String(req.body.target || "").toUpperCase();
+      if (!UPLOAD_TARGETS.includes(target)) return cb(new Error("Destino invalido."));
+      const dir = path.join(BI_DIR, target);
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      cb(null, path.basename(file.originalname).replace(/[/\\]/g, "_"));
+    },
+  }),
+  fileFilter: (_req, file, cb) => cb(null, /\.xlsx$/i.test(file.originalname)),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
+
+function handleBiUpload(req, res, next) {
+  biUpload.array("files", 20)(req, res, (error) => {
+    if (error) return res.status(400).json({ error: error.message || "Erro no upload." });
+    next();
+  });
+}
+
+function canUseTarget(profile, target) {
+  if (!supabase.enabled) return true;
+  if (!profile) return false;
+  if (profile.role === "admin") return true;
+  const permissions = profile.permissions || {};
+  return target === "FINANCEIRO" ? Boolean(permissions.atualizar_bi_financeiro) : Boolean(permissions.atualizar_bi);
+}
+
+function listBiFiles() {
+  const result = {};
+  for (const target of UPLOAD_TARGETS) {
+    const dir = path.join(BI_DIR, target);
+    result[target] = (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : [])
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".xlsx"))
+      .map((entry) => {
+        const stat = fs.statSync(path.join(dir, entry.name));
+        return { name: entry.name, size: stat.size, mtime: stat.mtime.toISOString() };
+      })
+      .sort((a, b) => b.mtime.localeCompare(a.mtime));
+  }
+  return result;
+}
 
 const cityOrder = ["SAO PAULO", "GOIANIA", "CURITIBA", "RIO DE JANEIRO"];
 
@@ -604,7 +654,7 @@ app.get("/api/meta", (_req, res) => {
   });
 });
 
-app.post("/api/reload", supabase.authorize("atualizar_bi"), (_req, res) => {
+app.post("/api/reload", supabase.authorize("atualizar_bi", "atualizar_bi_financeiro"), (_req, res) => {
   reloadData();
   res.json({
     ok: true,
@@ -613,6 +663,50 @@ app.post("/api/reload", supabase.authorize("atualizar_bi"), (_req, res) => {
     fileCount: sourceFiles.length,
     loadedAt: loadedAt.toISOString(),
     latestSourceUpdate: latestSourceUpdate()?.toISOString() || "",
+  });
+});
+
+app.get("/api/bi-files", supabase.authorize("atualizar_bi", "atualizar_bi_financeiro"), (_req, res) => {
+  res.json({ files: listBiFiles() });
+});
+
+app.post("/api/upload-bi", supabase.authorize("atualizar_bi", "atualizar_bi_financeiro"), handleBiUpload, (req, res) => {
+  const target = String(req.body.target || "").toUpperCase();
+  if (!canUseTarget(req.profile, target)) {
+    (req.files || []).forEach((file) => fs.unlink(file.path, () => {}));
+    return res.status(403).json({ error: "Sem permissao para atualizar este destino." });
+  }
+  if (!req.files?.length) return res.status(400).json({ error: "Nenhum arquivo .xlsx valido enviado." });
+  reloadData();
+  res.json({
+    ok: true,
+    uploaded: req.files.map((file) => file.filename),
+    target,
+    rowCount: data.length,
+    financeRowCount: financeData.length,
+    fileCount: sourceFiles.length,
+    loadedAt: loadedAt.toISOString(),
+  });
+});
+
+app.delete("/api/bi-files", supabase.authorize("atualizar_bi", "atualizar_bi_financeiro"), (req, res) => {
+  const target = String(req.query.target || "").toUpperCase();
+  const filename = path.basename(String(req.query.filename || ""));
+  if (!UPLOAD_TARGETS.includes(target) || !filename) return res.status(400).json({ error: "Parametros invalidos." });
+  if (!canUseTarget(req.profile, target)) return res.status(403).json({ error: "Sem permissao para excluir neste destino." });
+
+  const filePath = path.join(BI_DIR, target, filename);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return res.status(404).json({ error: "Arquivo nao encontrado." });
+  }
+  fs.unlinkSync(filePath);
+  reloadData();
+  res.json({
+    ok: true,
+    rowCount: data.length,
+    financeRowCount: financeData.length,
+    fileCount: sourceFiles.length,
+    loadedAt: loadedAt.toISOString(),
   });
 });
 
@@ -772,7 +866,29 @@ app.post("/api/verify-reset", (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+function watchBiDir() {
+  let debounceTimer = null;
+  const triggerReload = (filename) => {
+    if (filename && !/\.xlsx$/i.test(filename)) return;
+    if (filename && path.basename(filename).startsWith("~$")) return;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      const before = data.length;
+      reloadData();
+      console.log(`BI recarregado automaticamente: ${before} -> ${data.length} linhas (${sourceFiles.length} arquivos .xlsx)`);
+    }, 1500);
+  };
+
+  try {
+    fs.watch(BI_DIR, { recursive: true }, (_event, filename) => triggerReload(filename));
+    console.log(`Observando alteracoes em ${BI_DIR} para recarregar o BI automaticamente.`);
+  } catch (error) {
+    console.warn(`Nao foi possivel observar ${BI_DIR} automaticamente: ${error.message}`);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`Dashboard BI disponível em http://localhost:${PORT}`);
   console.log(`${data.length} linhas carregadas de ${walkXlsx(BI_DIR).length} arquivos .xlsx`);
+  watchBiDir();
 });
