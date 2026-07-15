@@ -279,11 +279,16 @@ async function loadAuthConfig() {
 }
 
 async function refreshSupabaseSession() {
-  if (!state.refreshToken) return false;
+  // Le o refreshToken mais recente do localStorage (nao o da memoria): o
+  // Supabase roda o refresh token a cada uso, entao se outra aba ja
+  // renovou a sessao, usar o token antigo guardado em memoria falharia.
+  const storedSession = getActiveSession();
+  const refreshToken = (storedSession?.mode === "supabase" && storedSession.refreshToken) || state.refreshToken;
+  if (!refreshToken) return false;
   const response = await fetch("/api/auth/refresh", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken: state.refreshToken }),
+    body: JSON.stringify({ refreshToken }),
   });
   if (!response.ok) return false;
   const data = await response.json();
